@@ -1,0 +1,124 @@
+ALGORITHM FractalEncode(Image, B)
+    // INPUT: 
+    //   Image: A 2D array of grayscale pixel intensities (values between 0.0 and 1.0)
+    //   B: The width and height of our Range blocks (e.g., 8 pixels)
+    // OUTPUT: 
+    //   CompressionData: A list of the optimized affine transformations
+
+    ImageWidth = GetWidth(Image)
+    ImageHeight = GetHeight(Image)
+    TotalPixelsInBlock = B * B
+    
+    CompressionData = EmptyList()
+
+    // ====================================================================
+    // 1. ITERATE OVER ALL RANGE BLOCKS (R_i)
+    // These are the small, non-overlapping destination blocks.
+    // ====================================================================
+    FOR ry = 0 TO ImageHeight - B STEP B:
+        FOR rx = 0 TO ImageWidth - B STEP B:
+            
+            // Extract the BxB pixel array for the current Range block
+            Array R[B][B] = ExtractBlock(Image, rx, ry, B)
+            
+            BestError = INFINITY
+            BestMatch = NULL
+            
+            // MATH: Calculate \bar{r} = (1 / nm) * \sum \sum r_{ij}
+            r_bar = 0.0
+            FOR y = 0 TO B - 1:
+                FOR x = 0 TO B - 1:
+                    r_bar = r_bar + R[x][y]
+            r_bar = r_bar / TotalPixelsInBlock
+
+            // ====================================================================
+            // 2. ITERATE OVER ALL DOMAIN BLOCKS (D_j)
+            // These are the larger, overlapping source blocks (2B x 2B).
+            // ====================================================================
+            FOR dy = 0 TO ImageHeight - (2*B) STEP B: // Step size can be 1 for higher quality
+                FOR dx = 0 TO ImageWidth - (2*B) STEP B:
+                    
+                    // Extract 2Bx2B block and downsample it to BxB by averaging 2x2 pixel chunks
+                    // MATH: This represents \widetilde{w_i}^{-1} (the spatial contraction)
+                    Array DownsampledD[B][B] = ExtractAndDownsample(Image, dx, dy, 2*B)
+
+                    // ====================================================================
+                    // 3. TEST ALL 8 ISOMETRIES (Rotations & Reflections)
+                    // ====================================================================
+                    FOR isometry = 0 TO 7:
+                        
+                        // Apply spatial transformation (0=0°, 1=90°, ..., 4=flip horizontal, etc.)
+                        Array D[B][B] = ApplyIsometry(DownsampledD, isometry)
+                        
+                        // MATH: Calculate \bar{d} = (1 / nm) * \sum \sum d_{ij}
+                        d_bar = 0.0
+                        FOR y = 0 TO B - 1:
+                            FOR x = 0 TO B - 1:
+                                d_bar = d_bar + D[x][y]
+                        d_bar = d_bar / TotalPixelsInBlock
+
+                        // ====================================================================
+                        // 4. LEAST SQUARES REGRESSION (Find optimal Contrast & Brightness)
+                        // ====================================================================
+                        alpha = 0.0
+                        beta = 0.0
+                        
+                        FOR y = 0 TO B - 1:
+                            FOR x = 0 TO B - 1:
+                                d_diff = D[x][y] - d_bar
+                                r_diff = R[x][y] - r_bar
+                                
+                                // MATH: \alpha = \sum \sum (d_{ij} - \bar{d})(r_{ij} - \bar{r})
+                                alpha = alpha + (d_diff * r_diff)
+                                
+                                // MATH: \beta = \sum \sum (d_{ij} - \bar{d})^2
+                                beta = beta + (d_diff * d_diff)
+                        
+                        // MATH: s_i = \alpha / \beta
+                        IF beta == 0.0 THEN
+                            s = 0.0 // Prevent division by zero if the block is a solid color
+                        ELSE
+                            s = alpha / beta
+                        
+                        // Enforce the Banach Contraction Mapping requirement!
+                        // MATH: Ensure |s_i| * \sqrt{|\det A_i|} < 1
+                        IF s > 0.99 THEN s = 0.99
+                        IF s < -0.99 THEN s = -0.99
+                        
+                        // MATH: o_i = \bar{r} - s_i * \bar{d}
+                        o = r_bar - (s * d_bar)
+                        
+                        // ====================================================================
+                        // 5. CALCULATE THE ERROR (Mean Squared Error)
+                        // How close is our modified Domain block to the target Range block?
+                        // ====================================================================
+                        CurrentError = 0.0
+                        
+                        FOR y = 0 TO B - 1:
+                            FOR x = 0 TO B - 1:
+                                // MATH: s_i * d_{ij} + o_i
+                                PredictedPixel = (s * D[x][y]) + o
+                                
+                                // MATH: \sum \sum (s_i * d_{ij} + o_i - r_{ij})^2
+                                Difference = R[x][y] - PredictedPixel
+                                CurrentError = CurrentError + (Difference * Difference)
+
+                        // ====================================================================
+                        // 6. UPDATE THE BEST MATCH
+                        // ====================================================================
+                        IF CurrentError < BestError THEN
+                            BestError = CurrentError
+                            BestMatch = {
+                                Range_X: rx,
+                                Range_Y: ry,
+                                Domain_X: dx,
+                                Domain_Y: dy,
+                                Rotation_ID: isometry,
+                                Contrast_s: s,
+                                Offset_o: o
+                            }
+
+            // After searching all domains and isometries, save the optimal recipe for this Range block
+            CompressionData.Append(BestMatch)
+
+    RETURN CompressionData

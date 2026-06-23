@@ -1,0 +1,21 @@
+# Build artifacts
+out/
+fractal_compression
+*.o
+*.csv
+*.py
+
+# Outputs and Test Media
+*.frc
+*.png
+*.gif
+*.bmp
+*.jpg
+*.jpeg
+*.webp
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
